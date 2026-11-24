@@ -2,6 +2,10 @@ import { Platform } from "../../platform/index.js";
 import { TizenEngineFsService } from "../../platform/tizen/tizenEngineFsService.js";
 import { TizenCapabilities } from "../../platform/tizen/tizenCapabilities.js";
 import {
+  BrowserEngineFsService,
+  isBrowserEngineBaseUrl
+} from "../../platform/browserEngineFsService.js";
+import {
   TorrentSettingsStore,
   getTorrentProfilePeerLimits
 } from "../../data/local/torrentSettingsStore.js";
@@ -14,6 +18,9 @@ export {
   TizenEngineFsService,
   TorrentSettingsStore,
   TizenCapabilities,
+  BrowserEngineFsService,
+  getEngineService,
+  canUseEngineP2p,
   TIZEN_STREAMING_KIND,
   CREATE_TIMEOUT_MS,
   removeRequestsByInfoHash,
@@ -186,7 +193,21 @@ function getTrackerSources(stream = {}, magnetUri = "") {
   return result;
 }
 
+function getEngineService() {
+  return Platform.isBrowser() ? BrowserEngineFsService : TizenEngineFsService;
+}
+
+function canUseEngineP2p() {
+  if (Platform.isBrowser()) {
+    return BrowserEngineFsService.isAvailable();
+  }
+  return Platform.isTizen() && TizenCapabilities.canUseP2p();
+}
+
 function normalizeBaseUrl(value = "") {
+  if (isBrowserEngineBaseUrl(value)) {
+    return BrowserEngineFsService.getLocalBaseUrls()[0];
+  }
   try {
     const parsed = new URL(String(value || "").trim());
     const hostname = parsed.hostname.replace(/^\[|\]$/g, "").toLowerCase();

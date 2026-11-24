@@ -188,9 +188,84 @@ async function proxyLocalMediaRequest(request, response, pathname) {
   return true;
 }
 
+
+// Streams any /engine/* request to the local EngineFS media server so a browser
+// on another machine can use torrents through the same origin as the web app.
+const ENGINE_PROXY_PREFIX = "/engine";
+const HOP_BY_HOP_HEADERS = new Set([
+  "connection",
+  "keep-alive",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade",
+  "host"
+]);
+
+function filterProxyHeaders(headers = {}) {
+  const result = {};
+  for (const [name, value] of Object.entries(headers)) {
+    if (!HOP_BY_HOP_HEADERS.has(String(name).toLowerCase()) && value !== undefined) {
+      result[name] = value;
+    }
+  }
+  return result;
+}
+
+async function streamEngineRequest(request, response, upstreamPath) {
+  const mediaPort = await findLocalMediaServerPort();
+  if (!mediaPort) {
+    response.writeHead(503, {
+      "Cache-Control": "no-store",
+      "Content-Type": "application/json; charset=utf-8"
+    });
+    response.end(JSON.stringify({ error: "Local media server unavailable" }));
+    return;
+  }
+  const upstream = http.request(
+    {
+      host: "127.0.0.1",
+      port: mediaPort,
+      path: upstreamPath || "/",
+      method: request.method || "GET",
+      headers: { ...filterProxyHeaders(request.headers), host: `127.0.0.1:${mediaPort}` }
+    },
+    (upstreamResponse) => {
+      const headers = filterProxyHeaders(upstreamResponse.headers);
+      const location = headers.location || headers.Location;
+      if (typeof location === "string" && /^https?:\/\/(127\.0\.0\.1|localhost):\d+\//i.test(location)) {
+        headers.location = location.replace(/^https?:\/\/[^/]+/i, ENGINE_PROXY_PREFIX);
+        delete headers.Location;
+      }
+      response.writeHead(upstreamResponse.statusCode || 502, headers);
+      upstreamResponse.pipe(response);
+    }
+  );
+  upstream.on("error", (error) => {
+    if (!response.headersSent) {
+      response.writeHead(502, { "Content-Type": "application/json; charset=utf-8" });
+    }
+    response.end(JSON.stringify({ error: String(error?.message || error) }));
+  });
+  request.on("aborted", () => upstream.destroy());
+  response.on("close", () => upstream.destroy());
+  request.pipe(upstream);
+}
+
 const server = http.createServer(async (request, response) => {
   try {
     const requestUrl = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
+    if (
+      requestUrl.pathname === ENGINE_PROXY_PREFIX ||
+      requestUrl.pathname.startsWith(`${ENGINE_PROXY_PREFIX}/`)
+    ) {
+      const upstreamPath = (request.url || "/").slice(ENGINE_PROXY_PREFIX.length) || "/";
+      await streamEngineRequest(request, response, upstreamPath.startsWith("/") ? upstreamPath : `/${upstreamPath}`);
+      return;
+    }
+
     if (requestUrl.pathname === "/nuvio.env.js") {
       const { env } = await readEnvProperties({ rootDir });
       response.writeHead(200, {
