@@ -28,6 +28,7 @@ import { renderAddonRemotePage } from "./bootstrap/renderAddonRemotePage.js";
 import { warmStreamingLibs } from "./runtime/loadStreamingLibs.js";
 import { runAfterFirstHomePaint } from "./runtime/startupScheduler.js";
 import { Platform } from "./platform/index.js";
+import { BrowserEngineFsService } from "./platform/browserEngineFsService.js";
 import { TizenCapabilities } from "./platform/tizen/tizenCapabilities.js";
 import { PluginServiceClient } from "./platform/pluginServiceClient.js";
 import {
@@ -774,6 +775,10 @@ async function bootstrapApp() {
   appShellRendered = true;
   markBootStage("Initializing TV platform");
   Platform.init();
+  if (Platform.isBrowser()) {
+    // Detect the self-hosted streaming server early so torrent sources are listed.
+    void BrowserEngineFsService.ensureStarted();
+  }
   setupPluginServiceLifecycle();
   if (shouldDisableTizenPluginSupport()) {
     markBootStage("PluginService disabled on Tizen below 6.0");

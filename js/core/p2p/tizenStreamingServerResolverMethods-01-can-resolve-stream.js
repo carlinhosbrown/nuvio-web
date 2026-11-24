@@ -7,6 +7,8 @@ export function createTizenStreamingServerResolverMethods01() {
     TizenEngineFsService,
     TorrentSettingsStore,
     TizenCapabilities,
+    getEngineService,
+    canUseEngineP2p,
     TIZEN_STREAMING_KIND,
     removeRequestsByInfoHash,
     logTizenP2pDebug,
@@ -28,7 +30,7 @@ export function createTizenStreamingServerResolverMethods01() {
 
   return {
     canResolveStream(stream = {}) {
-      return Platform.isTizen() && TizenCapabilities.canUseP2p() && Boolean(getInfoHash(stream));
+      return canUseEngineP2p() && Boolean(getInfoHash(stream));
     },
     // Starting EngineFS takes several seconds on Tizen 6 (#1609); begin while the
     // source list is open so playback does not wait for it.
@@ -36,7 +38,7 @@ export function createTizenStreamingServerResolverMethods01() {
       if (!TorrentSettingsStore.get().p2pEnabled || !streams.some((stream) => this.canResolveStream(stream))) {
         return false;
       }
-      void TizenEngineFsService.ensureStarted({ purpose: "p2p" }).catch(() => {});
+      void getEngineService().ensureStarted({ purpose: "p2p" }).catch(() => {});
       return true;
     },
     isTorrentStream(stream = {}) {
@@ -81,7 +83,7 @@ export function createTizenStreamingServerResolverMethods01() {
           infoHash: String(match[1] || "").toLowerCase(),
           fileIdx: Number.isFinite(fileIdx) ? fileIdx : -1,
           playbackUrl,
-          baseUrl: `${parsed.protocol}//${parsed.host}`,
+          baseUrl: normalizeBaseUrl(playbackUrl),
           baseUrlKind: "local-service",
           mimeType: String(stream?.mimeType || stream?.sourceType || "").trim() || null
         };
@@ -91,7 +93,7 @@ export function createTizenStreamingServerResolverMethods01() {
     },
     async remove(infoHash, { baseUrl = "", timeoutMs = 2500 } = {}) {
       const normalizedHash = normalizeInfoHash(infoHash);
-      if (!normalizedHash || !Platform.isTizen()) {
+      if (!normalizedHash || !(Platform.isTizen() || Platform.isBrowser())) {
         return { status: "unsupported" };
       }
       const existingRequest = removeRequestsByInfoHash.get(normalizedHash);
@@ -99,7 +101,7 @@ export function createTizenStreamingServerResolverMethods01() {
         return existingRequest;
       }
       const removeRequest = (async () => {
-        const bases = uniqueBaseUrls([baseUrl, ...TizenEngineFsService.getLocalBaseUrls()]);
+        const bases = uniqueBaseUrls([baseUrl, ...getEngineService().getLocalBaseUrls()]);
         let lastError = null;
         for (const candidateBaseUrl of bases) {
           try {
@@ -133,10 +135,10 @@ export function createTizenStreamingServerResolverMethods01() {
       if (getDirectPlaybackUrl(stream)) {
         return { status: "success", stream };
       }
-      if (!Platform.isTizen()) {
+      if (!Platform.isTizen() && !Platform.isBrowser()) {
         return { status: "unsupported" };
       }
-      if (!TizenCapabilities.canUseP2p()) {
+      if (Platform.isTizen() && !TizenCapabilities.canUseP2p()) {
         return { status: "unsupported", detail: "Tizen P2P streaming is not supported on this TV" };
       }
       const infoHash = getInfoHash(stream);
@@ -147,7 +149,7 @@ export function createTizenStreamingServerResolverMethods01() {
       try {
         let baseUrl = "";
         const baseUrlKind = "local-service";
-        const localService = await TizenEngineFsService.ensureStarted({ purpose: "p2p" });
+        const localService = await getEngineService().ensureStarted({ purpose: "p2p" });
         if (localService.status === "success" && localService.baseUrl) {
           baseUrl = localService.baseUrl;
         } else {

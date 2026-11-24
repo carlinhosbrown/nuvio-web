@@ -8,5 +8,5 @@ COPY . .
 # Copia local.properties (claves de TMDB, Trakt, Supabase...) antes de construir.
 RUN npm run build
 ENV HOST=0.0.0.0 PORT=4173
-EXPOSE 4173 2710
+EXPOSE 4173
 CMD ["node", "scripts/serve.mjs"]
